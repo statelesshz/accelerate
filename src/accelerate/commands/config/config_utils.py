@@ -39,6 +39,7 @@ DYNAMO_BACKENDS = [
     "TENSORRT",
     "IPEX",
     "TVM",
+    "NPU",
 ]
 
 
