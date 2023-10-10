@@ -73,6 +73,7 @@ from .utils import (
     get_pretty_name,
     has_transformer_engine_layers,
     id_tensor_storage,
+    is_apex_available,
     is_bf16_available,
     is_deepspeed_available,
     is_fp8_available,
@@ -112,6 +113,9 @@ if is_deepspeed_available():
 if is_fp8_available():
     import transformer_engine.common.recipe as te_recipe
     from transformer_engine.pytorch import fp8_autocast
+
+if is_apex_available():
+    from apex import amp
 
 
 if is_megatron_lm_available():
@@ -162,10 +166,10 @@ class Accelerator:
             round multiple of the `num_processes` you are using. If `False`, actual batch size used will be the one set
             in your script multiplied by the number of processes.
         mixed_precision (`str`, *optional*):
-            Whether or not to use mixed precision training. Choose from 'no','fp16','bf16 or 'fp8'. Will default to the
+            Whether or not to use mixed precision training. Choose from 'no','fp16','bf16,'fp8' or 'apex'. Will default to the
             value in the environment variable `ACCELERATE_MIXED_PRECISION`, which will use the default value in the
             accelerate config of the current system or the flag passed with the `accelerate.launch` command. 'fp8'
-            requires the installation of transformers-engine.
+            requires the installation of transformers-engine, 'apex' requires the installation of Apex.
         gradient_accumulation_steps (`int`, *optional*, default to 1):
             The number of steps that should pass before gradients are accumulated. A number > 1 should be combined with
             `Accelerator.accumulate`. If not passed, will default to the value in the environment variable
@@ -334,6 +338,7 @@ class Accelerator:
         self.init_handler = None
         self.fp8_recipe_handler = None
         self.autocast_handler = None
+        self.apex_handler = None
         if kwargs_handlers is not None:
             for handler in kwargs_handlers:
                 assert isinstance(
@@ -364,6 +369,11 @@ class Accelerator:
                         raise ValueError("You can only pass one `AutocastKwargs` in `kwargs_handler`.")
                     else:
                         self.autocast_handler = handler
+                elif isinstance(handler, ApexKwargs):
+                    if self.apex_handler is not None:
+                        raise ValueError("You can only pass one `ApwxKargs` in `kwargs_hanlder`.")
+                    else:
+                        self.apex_handler = handler
 
         kwargs = self.init_handler.to_kwargs() if self.init_handler is not None else {}
         self.state = AcceleratorState(
@@ -417,6 +427,7 @@ class Accelerator:
         # Mixed precision attributes
         self.scaler = None
         self.native_amp = False
+        self.apex_amp = False
         err = "{mode} mixed precision requires {requirement}"
         if (
             self.state.mixed_precision == "fp16"
@@ -435,6 +446,14 @@ class Accelerator:
                 self.scaler = torch.npu.amp.GradScaler(**kwargs)
             else:
                 self.scaler = torch.cuda.amp.GradScaler(**kwargs)
+
+        elif (
+            self.state.mixed_precision == "apex"
+            and self.device.type in ("cuda", "npu")
+            and self.distributed_type not in (DistributedType.DEEPSPEED, DistributedType.MEGATRON_LM)
+        ):
+            self.apex_amp = True
+
 
         elif self.state.mixed_precision == "bf16" and self.distributed_type not in (
             DistributedType.DEEPSPEED,

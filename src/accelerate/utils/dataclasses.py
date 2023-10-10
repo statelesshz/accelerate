@@ -80,6 +80,28 @@ class AutocastKwargs(KwargsHandler):
 
 
 @dataclass
+class ApexKwargs(KwargsHandler):
+    """
+    Use this object in your [`Accelerator`] to customize how `apex.amp.initialize` behaves. Please refer to the
+    documentation of this [Apex](https://github.com/NVDIA/Apex.git) for more
+    information on each argument.
+
+    Example:
+
+    ```python
+    from accelerate import Accelerator
+    from accelerate.utils import ApexKwargs
+
+    kwargs = ApexKwargs(opt_level="O2", loss_scale=1024.0)
+    accelerator = Accelerator(kwargs_handlers=[kwargs])
+    ```
+    """
+
+    opt_level: str = "O1"
+    loss_scale: Optional[float] = None
+
+
+@dataclass
 class DistributedDataParallelKwargs(KwargsHandler):
     """
     Use this object in your [`Accelerator`] to customize how your model is wrapped in a

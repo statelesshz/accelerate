@@ -71,6 +71,9 @@ def is_ccl_available():
 def get_ccl_version():
     return importlib.metadata.version("oneccl_bind_pt")
 
+def is_apex_available():
+    return _is_package_available("apex")
+
 
 def is_fp8_available():
     return _is_package_available("transformer_engine")

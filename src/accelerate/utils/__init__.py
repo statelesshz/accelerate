@@ -12,6 +12,7 @@ from .constants import (
     WEIGHTS_NAME,
 )
 from .dataclasses import (
+    ApexKwargs,
     AutocastKwargs,
     BnbQuantizationConfig,
     ComputeEnvironment,
@@ -41,6 +42,7 @@ from .imports import (
     is_4bit_bnb_available,
     is_8bit_bnb_available,
     is_aim_available,
+    is_apex_available,
     is_bf16_available,
     is_bnb_available,
     is_boto3_available,
