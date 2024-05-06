@@ -217,6 +217,46 @@ def get_cpu_distributed_information() -> CPUInformation:
     return CPUInformation(**information)
 
 
+def get_npu_pcie_information(devices):
+    information = {}
+    for d in devices:
+        infos = os.popen(f"npu-smi info -t board -i {d}").read().strip().split("\n")
+        for info in infos:
+            entry = "".join(info.split())
+            if entry.startswith("PCIeBusInfo"):
+                information[d] = entry[len("PCIeBufInfo") + 1 :]
+                break
+    return information
+
+
+def get_npu_numa_information(npu_pcie_information):
+    npu_numa_information = {}
+    numa_npu_information = {}
+
+    for npu, pcie in npu_pcie_information.items():
+        infos = os.popen(f"lspci -s {pcie} -vvv").read().strip().split("\n")
+        for info in infos:
+            entry = "".join(info.split())
+            if entry.startswith("NUMAnode"):
+                numa_id = int(entry[len("NUMAnode") + 1 :])
+                npu_numa_information[npu] = numa_id
+                npus = numa_npu_information.get(numa_id, None)
+                if npus is None:
+                    numa_npu_information[numa_id] = []
+                numa_npu_information[numa_id].append(npu)
+                break
+    return npu_numa_information, numa_npu_information
+
+
+def get_affinity_cpu_information(numa_npu_info, npu_pcie_info):
+    affinity_cpu_info = {}
+    for numa_id, npus in numa_npu_info.items():
+        pcie = npu_pcie_info[npus[0]].lower()
+        cpu_range = os.popen(f"cat /sys/bus/pci/devices/{pcie}/local_cpulist").read().strip().split("-")
+        affinity_cpu_info[numa_id] = [i for i in range(int(cpu_range[0]), int(cpu_range[1]) + 1)]
+    return affinity_cpu_info
+
+
 def override_numa_affinity(local_process_index: int, verbose: Optional[bool] = None) -> None:
     """
     Overrides whatever NUMA affinity is set for the current process. This is very taxing and requires recalculating the
@@ -251,6 +291,35 @@ def override_numa_affinity(local_process_index: int, verbose: Optional[bool] = N
         affinity_list.reverse()  # so core 0 is the 0th element
         affinity_to_set = [i for i, e in enumerate(affinity_list) if e != 0]
         os.sched_setaffinity(0, affinity_to_set)
+        if verbose:
+            cpu_cores = os.sched_getaffinity(0)
+            logger.info(f"Assigning {len(cpu_cores)} cpu cores to process {local_process_index}: {cpu_cores}")
+    elif hasattr(torch, "npu") and torch.npu.is_available:
+        visible_devices = os.environ.get("ASCEND_RT_VISIBLE_DEVICES", None)
+        if visible_devices is None:
+            world_size = int(os.environ.get("WORLD_SIZE", "1"))
+            devices = [i for i in range(world_size)]
+        else:
+            devices = list(map(int, visible_devices.split(",")))
+
+        npu_pcie_info = get_npu_pcie_information(devices)
+        npu_numa_info, numa_npu_info = get_npu_numa_information(npu_pcie_info)
+        if numa_npu_info is None or len(numa_npu_info) == 0:
+            return
+
+        cpu_info = get_affinity_cpu_information(numa_npu_info, npu_pcie_info)
+
+        cur_device = devices[local_process_index]
+        numa_id = npu_numa_info[cur_device]
+        shared_devices = sorted(numa_npu_info[numa_id])
+
+        all_cpu_list = cpu_info[numa_id]
+        cpu_num_per_device = int(len(all_cpu_list) // len(shared_devices))
+
+        idx = shared_devices.index(cur_device)
+        affinity_list = [all_cpu_list[i] for i in range(idx * cpu_num_per_device, (idx + 1) * cpu_num_per_device)]
+
+        os.sched_setaffinity(0, affinity_list)
         if verbose:
             cpu_cores = os.sched_getaffinity(0)
             logger.info(f"Assigning {len(cpu_cores)} cpu cores to process {local_process_index}: {cpu_cores}")
